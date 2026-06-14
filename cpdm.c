@@ -137,7 +137,7 @@ func_deltau(&Phi, &R_barra, &Rs_barra, &F, r_ki, &x_ki, &Delta_U);
 double du_calc = u_anterior + Delta_U.ret(&Delta_U, 0, 0);
 //printf("Delta_U[0.0]: %f\n", Delta_U.ret(&Delta_U, 0, 5));
 
-if(du_calc > 0.5 ) {du_calc = 0.5;}
+if(du_calc > 0.5) {du_calc = 0.5;}
 else if(du_calc < 0) {du_calc = 0;}
 else {du_calc = du_calc;}
 
@@ -221,6 +221,28 @@ void SimulationEnd(const char *szId, void ** reserved_UserData, int reserved_Thr
 //###############################################################################//
 //                                                             DMPC                                                              //
 //###############################################################################//
+
+void zoh(Matriz* A, Matriz* B, double tempo, Matriz* Ad, Matriz* Bd) {
+	printf("Teste\n");
+
+	//Cálculo de Ad
+	double m0[BUFF]; Matriz M0 = matriz(m0, LC_MAX, LC_MAX); ident(&M0, A->linhas); //I
+	double m1[BUFF]; Matriz M1 = matriz(m1, LC_MAX, LC_MAX); mult(A, &M1, tempo);   //A*T
+	double m2[BUFF]; Matriz M2 = matriz(m2, LC_MAX, LC_MAX); mat_mult(&M1, &M1, &M2);
+	double m3[BUFF]; Matriz M3 = matriz(m3, LC_MAX, LC_MAX); mult(&M2, &M3, 0.5);		//(A*T)^2/2!
+	double m4[BUFF]; Matriz M4 = matriz(m4, LC_MAX, LC_MAX); sm(&M0, &M1, &M4);
+	double m5[BUFF]; Matriz M5 = matriz(m5, LC_MAX, LC_MAX); sm(&M4, &M3, &M5);
+
+	M5.print(&M5);
+
+	//Cálculo de Bd
+	double m6[BUFF]; Matriz M6 = matriz(m6, LC_MAX, LC_MAX); inv(A, &M6);   //inv(A)
+	double m7[BUFF]; Matriz M7 = matriz(m7, LC_MAX, LC_MAX); sub(&M5, &M0, &M7); //e^(AT) - I
+	double m8[BUFF]; Matriz M8 = matriz(m8, LC_MAX, LC_MAX); mat_mult(&M6, &M7, &M8);
+	double m9[BUFF]; Matriz M9 = matriz(m9, LC_MAX, LC_MAX); mat_mult(&M8, B, &M9);
+	M9.print(&M9);
+
+}
 
 void func_deltau(Matriz* Phi, Matriz* R_barra, Matriz* Rs_barra, Matriz* F, double r_ki, Matriz* x_ki, Matriz* ret){
 //Obtenção do incremento do sinal de controle Delta_U
@@ -514,10 +536,13 @@ void mat_pot(Matriz* mat, Matriz* res, int pot) {
 	else {
 		double buff[BUFF];
 		Matriz r = matriz(buff, 6, 6);
+		double temp_buff[BUFF];
+		Matriz temp = matriz(temp_buff, mat->linhas, mat->colunas);
+		cop_mat(mat, &r);
 		int i;
-		for(i = 0; i < pot; i++){
-			if(i == 0) cop_mat(mat,  &r);
-			else mat_mult(mat, &r, &r);
+		for(i = 1; i < pot; i++){
+			mat_mult(mat, &r, &temp);
+			cop_mat(&temp, &r);
 		}
 		cop_mat(&r, res);
 	}
@@ -691,7 +716,7 @@ void ident(Matriz* m,  int t){
 //Retorna uma matriz identidade de dimensão txt
 	m->linhas = t;
 	m->colunas = t;
-	memset(m->matriz, 0, sizeof(m->matriz));
+	//memset(m->matriz, 0, sizeof(m->matriz));
 	int i;
 	for(i = 0; i < t; i++) { m->matriz[(t+1)*i] = 1.0;}
 }
