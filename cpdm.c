@@ -64,6 +64,8 @@ void ret_A(Matriz* Am, Matriz* Cm, Matriz* A); //pronto
 void ret_B(Matriz* Bm, Matriz* Cm, Matriz* B); //pronto
 void ret_C(Matriz* Cm, Matriz* C); //pronto 
 void discret(double, Matriz*, Matriz*, Matriz*, Matriz*); //pronto
+void zoh(Matriz* A, Matriz* B, double tempo, Matriz* Ad, Matriz* Bd);
+void func_Kmpc_Ky(Matriz* Phi, Matriz* R_barra, Matriz* Rs_barra, Matriz* F, Matriz* K_mpc, double* K_y);
 
 // PLACE GLOBAL VARIABLES OR USER FUNCTIONS HERE...
 
@@ -92,6 +94,16 @@ double rw;
 static Matriz x_anterior;
 static Matriz x_ki;
 
+double rs_barra[BUFF]; Matriz Rs_barra;
+double r_barra1[BUFF];  Matriz R_barra1;
+double r_barra[BUFF];    Matriz R_barra; 
+double deltau[BUFF]; Matriz Delta_U;
+
+static double k_mpc_array[BUFF];
+static Matriz K_mpc;
+static double K_y = 0.0;
+
+
 
 
 //===============================================================================//
@@ -116,33 +128,29 @@ void SimulationStep(
 	x_ki.matriz[4] = in[4];
 
 
-if(u_anterior == NULL) {
-	u_anterior = 0;
-	cop_mat(&x_ki, &x_anterior); //FAZER X_KI
-}
-
-double rs_barra[BUFF]; Matriz Rs_barra  = matriz(rs_barra, Np, 1);
-int i;
-for (i = 0; i < Np; i++)
-	Rs_barra.matriz[i] = 1;
-double r_barra1[BUFF];  Matriz R_barra1 = matriz(r_barra1, LC_MAX, LC_MAX); ident(&R_barra1, Nc);
-double r_barra[BUFF];    Matriz R_barra = matriz(r_barra, LC_MAX, LC_MAX);
-mult(&R_barra1, &R_barra, rw); //VERIFICAR
-
-
-
-double deltau[BUFF]; Matriz Delta_U = matriz(deltau, LC_MAX, LC_MAX);
-func_deltau(&Phi, &R_barra, &Rs_barra, &F, r_ki, &x_ki, &Delta_U);
-//void func_deltau(Matriz* Phi, Matriz* R_barra, Matriz* Rs_barra, Matriz* F, double r_ki, Matriz* x_ki, Matriz* ret)
-double du_calc = u_anterior + Delta_U.ret(&Delta_U, 0, 0);
-//printf("Delta_U[0.0]: %f\n", Delta_U.ret(&Delta_U, 0, 5));
-
-if(du_calc > 0.5) {du_calc = 0.5;}
-else if(du_calc < 0) {du_calc = 0;}
-else {du_calc = du_calc;}
-
-u_anterior = du_calc;
-out[0] = du_calc;
+// Proteção do estado anterior
+	if(u_anterior == NULL) { 
+		u_anterior = 0; 
+		cop_mat(&x_ki, &x_anterior); 
+	}
+	
+	// 1. Multiplica o ganho constante pelo estado: M_kx = K_mpc * x_ki
+	double buff_kx[BUFF]; Matriz M_kx = matriz(buff_kx, 1, 1);
+	mat_mult(&K_mpc, &x_ki, &M_kx);
+	
+	// 2. Lei de controle puramente algébrica: Delta_u = Ky*r - Kmpc*x
+	double delta_u_escalar = (K_y * r_ki) - M_kx.ret(&M_kx, 0, 0);
+	
+	// 3. Integra o controle (u(k) = u(k-1) + Delta_u)
+	double du_calc = u_anterior + delta_u_escalar;
+	
+	// 4. Aplica as restrições físicas (saturação do Duty Cycle entre 0 e 0.5)
+	if(du_calc > 0.5) { du_calc = 0.5; } 
+	else if(du_calc < 0) { du_calc = 0; } 
+	
+	// 5. Atualiza variáveis para o próximo step e envia o sinal
+	u_anterior = du_calc;
+	out[0] = du_calc;
 
 
 }
@@ -187,8 +195,8 @@ void SimulationBegin(
 	double ad[BUFF];   Ad = matriz(ad, LC_MAX, LC_MAX);
 	double bd[BUFF];   Bd = matriz(bd, LC_MAX, LC_MAX);
 	double cd[] = {0, 0, 0, 1};   Cd = matriz(cd, 1, 4); 
-	discret(Delta_T, &A_planta, &B_planta, &Ad, &Bd); 
-	// ================= [ CONFIA ] ====================
+	zoh(&A_planta, &B_planta, Delta_T, &Ad, &Bd);
+
 	
 	//estende-se o modelo
 	double a[BUFF]; A = matriz(a, LC_MAX, LC_MAX);
@@ -199,12 +207,30 @@ void SimulationBegin(
 	ret_B(&Bd, &Cd, &B);
 	ret_C(&Cd, &C);
 
+	Rs_barra  = matriz(rs_barra, Np, 1);
+	int i;
+	for (i = 0; i < Np; i++)
+		Rs_barra.matriz[i] = 1;
+	R_barra1 = matriz(r_barra1, LC_MAX, LC_MAX); ident(&R_barra1, Nc);
+	R_barra = matriz(r_barra, LC_MAX, LC_MAX);
+	mult(&R_barra1, &R_barra, rw); //VERIFICAR
+
+	Delta_U = matriz(deltau, LC_MAX, LC_MAX);
+
 	
 	//cria=se as matrizes de base
 	double phi[BUFF]; Phi = matriz(phi, LC_MAX, LC_MAX);
 	double f[BUFF];   F = matriz(f, LC_MAX, LC_MAX);
 	func_Phi(&A, &B, &C, Np, Nc, &Phi);
-	func_F(&A, &C, &F, Np); 
+	func_F(&A, &C, &F, Np);
+
+	
+	
+	// Instanciação da Matriz K_mpc global como matriz linha (1 x n_estados)
+	K_mpc = matriz(k_mpc_array, 1, A.linhas);
+	
+	// Calcula os ganhos de forma offline antes do simulador rodar
+	func_Kmpc_Ky(&Phi, &R_barra, &Rs_barra, &F, &K_mpc, &K_y);
 
 }
 
@@ -223,8 +249,6 @@ void SimulationEnd(const char *szId, void ** reserved_UserData, int reserved_Thr
 //###############################################################################//
 
 void zoh(Matriz* A, Matriz* B, double tempo, Matriz* Ad, Matriz* Bd) {
-	printf("Teste\n");
-
 	//Cálculo de Ad
 	double m0[BUFF]; Matriz M0 = matriz(m0, LC_MAX, LC_MAX); ident(&M0, A->linhas); //I
 	double m1[BUFF]; Matriz M1 = matriz(m1, LC_MAX, LC_MAX); mult(A, &M1, tempo);   //A*T
@@ -232,16 +256,66 @@ void zoh(Matriz* A, Matriz* B, double tempo, Matriz* Ad, Matriz* Bd) {
 	double m3[BUFF]; Matriz M3 = matriz(m3, LC_MAX, LC_MAX); mult(&M2, &M3, 0.5);		//(A*T)^2/2!
 	double m4[BUFF]; Matriz M4 = matriz(m4, LC_MAX, LC_MAX); sm(&M0, &M1, &M4);
 	double m5[BUFF]; Matriz M5 = matriz(m5, LC_MAX, LC_MAX); sm(&M4, &M3, &M5);
-
-	M5.print(&M5);
+	cop_mat(&M5, Ad);
 
 	//Cálculo de Bd
-	double m6[BUFF]; Matriz M6 = matriz(m6, LC_MAX, LC_MAX); inv(A, &M6);   //inv(A)
-	double m7[BUFF]; Matriz M7 = matriz(m7, LC_MAX, LC_MAX); sub(&M5, &M0, &M7); //e^(AT) - I
-	double m8[BUFF]; Matriz M8 = matriz(m8, LC_MAX, LC_MAX); mat_mult(&M6, &M7, &M8);
-	double m9[BUFF]; Matriz M9 = matriz(m9, LC_MAX, LC_MAX); mat_mult(&M8, B, &M9);
-	M9.print(&M9);
+	double m_bd1[BUFF]; Matriz M_bd1 = matriz(m_bd1, LC_MAX, LC_MAX); 
+	mult(&M0, &M_bd1, tempo); 
 
+	// 2. M_bd2 = A * (T^2)/2. Note que M1 já é (A*T). 
+	//    Logo, (A*T) * (T/2) resulta em A*(T^2)/2
+	double m_bd2[BUFF]; Matriz M_bd2 = matriz(m_bd2, LC_MAX, LC_MAX); 
+	mult(&M1, &M_bd2, tempo / 2.0); 
+
+	// 3. M_bd3 = (I*T + A*(T^2)/2)
+	double m_bd3[BUFF]; Matriz M_bd3 = matriz(m_bd3, LC_MAX, LC_MAX); 
+	sm(&M_bd1, &M_bd2, &M_bd3); 
+
+	// 4. Bd = M_bd3 * B
+	double m_bd4[BUFF]; Matriz M_bd4 = matriz(m_bd4, LC_MAX, LC_MAX); 
+	mat_mult(&M_bd3, B, &M_bd4); 
+	
+	cop_mat(&M_bd4, Bd);
+}
+
+void func_Kmpc_Ky(Matriz* Phi, Matriz* R_barra, Matriz* Rs_barra, Matriz* F, Matriz* K_mpc, double* K_y) {
+	// Phi_T = transposta(Phi)
+	double phi_t[BUFF]; Matriz Phi_T = matriz(phi_t, LC_MAX, LC_MAX);
+	transposta(Phi, &Phi_T);
+	
+	// Phi_T_Phi = Phi_T * Phi
+	double phi_t_phi[BUFF]; Matriz Phi_T_Phi = matriz(phi_t_phi, LC_MAX, LC_MAX);
+	mat_mult(&Phi_T, Phi, &Phi_T_Phi);
+	
+	// M0 = Phi_T_Phi + R_barra (Matriz Hessiana)
+	double m0[BUFF]; Matriz M0 = matriz(m0, LC_MAX, LC_MAX);
+	sm(&Phi_T_Phi, R_barra, &M0);
+	
+	// M1 = inv(M0)
+	double m1[BUFF]; Matriz M1 = matriz(m1, LC_MAX, LC_MAX);
+	inv(&M0, &M1);
+	
+	// M2 = M1 * Phi_T
+	double m2[BUFF]; Matriz M2 = matriz(m2, LC_MAX, LC_MAX);
+	mat_mult(&M1, &Phi_T, &M2);
+	
+	// -----------------------------------------------------------------
+	// Cálculo do K_mpc (M2 * F)
+	// -----------------------------------------------------------------
+	double kmpc_full[BUFF]; Matriz K_mpc_full = matriz(kmpc_full, LC_MAX, LC_MAX);
+	mat_mult(&M2, F, &K_mpc_full);
+	
+	// K_mpc recebe apenas a PRIMEIRA LINHA de K_mpc_full (índice 0)
+	ret_lin(&K_mpc_full, K_mpc, 0);
+	
+	// -----------------------------------------------------------------
+	// Cálculo do K_y (M2 * Rs_barra)
+	// -----------------------------------------------------------------
+	double ky_full[BUFF]; Matriz K_y_full = matriz(ky_full, LC_MAX, LC_MAX);
+	mat_mult(&M2, Rs_barra, &K_y_full);
+	
+	// K_y recebe apenas o PRIMEIRO ELEMENTO de K_y_full (linha 0, col 0)
+	*K_y = K_y_full.ret(&K_y_full, 0, 0);
 }
 
 void func_deltau(Matriz* Phi, Matriz* R_barra, Matriz* Rs_barra, Matriz* F, double r_ki, Matriz* x_ki, Matriz* ret){
@@ -801,6 +875,5 @@ void sub(Matriz* m1, Matriz* m2, Matriz* res){
 //Retorna a subtração entre duas matrizes
 	pm(m1, m2, res, "menos");
 }
-
 
 
