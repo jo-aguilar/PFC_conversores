@@ -11,7 +11,6 @@
 #define MAX(a,b) ((a) > (b) ? (a) : (b))
 #endif
 
-
 //PROTÓTIPOS DE OPERAÇÃO DE MATRIZES
 //typedef struct Matriz Matriz;
 
@@ -66,7 +65,7 @@ void Kmpc_func (Matriz* A, Matriz* B, Matriz* C, Matriz* Kmpc, int Np,  int Nc, 
 void qp_hild(Matriz* H, Matriz* f, Matriz* A_cons, Matriz* b, Matriz* x_opt);
 
 //===============================================================================//
-//                                                   VARIÁVEIS GLOBAIS                                                  //
+//                              VARIÁVEIS GLOBAIS                                //
 //===============================================================================//
 
 static double   ilf = 0.0;
@@ -105,7 +104,7 @@ static double eta_opt_buff[BUFF];  static Matriz Eta_opt;
 
 
 //===============================================================================//
-//                                                            MAIN                                                                //
+//                                   MAIN                                        //
 //===============================================================================//
 
 void SimulationStep(double t, double delt, double *in, double *out,  int *pnError, char * szErrorMsg,
@@ -277,12 +276,12 @@ void SimulationEnd(const char *szId, void ** reserved_UserData, int reserved_Thr
 }
 
 //===============================================================================//
-//                                                                        FIM DE MAIN                                                                                    //
+//                              FIM DE MAIN                                      //
 //===============================================================================//
 
 
 //###############################################################################//
-//                                             DMPC COM LAGUERRE                                                    //
+//                            DMPC COM LAGUERRE                                  //
 //###############################################################################//
 
 void qp_hild(Matriz* H, Matriz* f, Matriz* A_cons, Matriz* b, Matriz* x_opt){
@@ -333,10 +332,7 @@ void qp_hild(Matriz* H, Matriz* f, Matriz* A_cons, Matriz* b, Matriz* x_opt){
         }
     }
 
-    if(kk == 0) { 
-        // printf("Solução ótima encontrada.\nRetornando...\n"); // Pode deixar comentado para não poluir console
-        return;
-    }
+    if(kk == 0) { return; }
 
     transposta(A_cons, &A_cons_tran); 
     mat_mult(&inv_H, &A_cons_tran, &H_A_cons); 
@@ -349,8 +345,6 @@ void qp_hild(Matriz* H, Matriz* f, Matriz* A_cons, Matriz* b, Matriz* x_opt){
     n = d.linhas;
     m = d.colunas;
     
-    // Substituída a alocação dinâmica (zeros) por zeramento manual direto no buffer
-    // Isso evita o 'memory leak' com o malloc() e não quebra o simulador
     lambda.linhas = n;
     lambda.colunas = m;
     for(i = 0; i < (n * m); i++){
@@ -364,7 +358,6 @@ void qp_hild(Matriz* H, Matriz* f, Matriz* A_cons, Matriz* b, Matriz* x_opt){
         for(j = 0; j < d.linhas; j++){
             w = 0.0;
             
-            // OTIMIZAÇÃO: Acessamos P diretamente!
             for(i = 0; i < P.colunas; i++){
                 w += P.ret(&P, j, i) * lambda.ret(&lambda, i, 0);
             }
@@ -416,9 +409,7 @@ void Psi_func(Matriz* A, Matriz* B, Matriz* C, Matriz* Psi, int Np, int Nc, doub
     double m1[BUFF];     Matriz M1          = matriz(m1, Nc, n_estados);
     double m2[BUFF];     Matriz M2          = matriz(m2, Nc, n_estados);
 
-    // 2. INÍCIO DA EXECUÇÃO
     // B->print(B); // Se for usar, deve vir AQUI, depois de todas as declarações
-
     // LIMPEZA DA MATRIZ SOMATÓRIO (Impede que o lixo da memória corrompa a soma)
     for(i = 0; i < (Nc * n_estados); i++) {
         Somatorio.matriz[i] = 0.0;
@@ -487,7 +478,6 @@ void Omega_func(Matriz* A, Matriz* B, Matriz* C, Matriz* Om, int Np, int Nc, dou
     double rl[BUFF];     Matriz RL          = matriz(rl, Nc, Nc); 
     double soma[BUFF];   Matriz Sm          = matriz(soma, Nc, Nc); 
 
-    // 2. INÍCIO DA EXECUÇÃO E PREPARAÇÃO
     
     // Zera os elementos de Somatorio para evitar corrupção por lixo de memória
     for(i = 0; i < (Nc * Nc); i++){
@@ -498,14 +488,12 @@ void Omega_func(Matriz* A, Matriz* B, Matriz* C, Matriz* Om, int Np, int Nc, dou
     Al_func(a, Nc, &Al);      
     L0_func(a, Nc, &L0);     
 
-    // CORREÇÃO DE PONTEIRO: B já é um ponteiro, passa-se diretamente
     Sc1_func(B, &L0, &Sc1);
     cop_mat(&Sc1, &Sc_anterior);
     
     transposta(C, &C_T);                                                                           
     mat_mult(&C_T, C, &Q);      
 
-    // 3. LAÇO ITERATIVO PARA O CÁLCULO DE OMEGA (Limites corretos)
     for (mm = 1; mm <= Np; mm++) { 
         // Passo recursivo
         if (mm == 1) {
@@ -528,7 +516,6 @@ void Omega_func(Matriz* A, Matriz* B, Matriz* C, Matriz* Om, int Np, int Nc, dou
         cop_mat(&Phi_m_t, &Sc_anterior);                                                          
     }
 
-    // 4. APLICAÇÃO DO PESO DE CONTROLE (R_L)
     ident(&I, Nc);
     mult(&I, &RL, rw);  
     sm(&Somatorio, &RL, &Sm);
@@ -599,17 +586,17 @@ void ret_C(Matriz* Cm, Matriz* C){
 }
 
 void Al_func (double a, int Nc, Matriz* Al) {
-    // 1. TODAS as declarações no topo absoluto (Regra do C89)
+    // Todas as declarações no topo absoluto (Regra do C89)
     int i, j, k, contador;
     double B, termo;
     double v[BUFF]; // Buffer estático para substituir a sua matriz Z2
 
-    // 2. Limpa a matriz destino Al com zeros (Substitui o zeros() com malloc)
+    // Limpa a matriz destino Al com zeros (Substitui o zeros() com malloc)
     for (i = 0; i < (Nc * Nc); i++) {
         Al->matriz[i] = 0.0;
     }
 
-    // 3. Monta o vetor de decaimento 'v' (A sua matriz Z2)
+    // Monta o vetor de decaimento 'v' (A sua matriz Z2)
     B = 1.0 - (a * a);
     
     v[0] = a;
@@ -621,7 +608,7 @@ void Al_func (double a, int Nc, Matriz* Al) {
         termo = termo * (-a); 
     }
 
-    // 4. Preenche a estrutura Triangular Inferior (A sua excelente lógica preservada!)
+    // Preenche a estrutura Triangular Inferior (A sua excelente lógica preservada!)
     for(j = 0; j < Nc; j++) {
         contador = 0;
         for(k = j; k >= 0; k--) {
@@ -662,8 +649,6 @@ void phi_m_t(Matriz* A, Matriz* Sc_anterior,  Matriz* Sc1, Matriz* Al, Matriz* R
 	transposta(&M1, &M2);          // (Al^{m-1})^T
 	mat_mult(Sc1, &M2, &M3);       // Sc1*(Al^{m-1})^T
 	
-	// OTIMIZAÇÃO: A soma já joga o resultado direto no endereço de saída (Res)
-	// Isso economiza RAM (100 doubles) e o tempo de processamento do cop_mat!
 	sm(&M0, &M3, Res);             // Res = A*Sc(m-1) + Sc1*(Al^{m-1})^T
 }
 
@@ -671,7 +656,7 @@ void phi_m_t(Matriz* A, Matriz* Sc_anterior,  Matriz* Sc1, Matriz* Al, Matriz* R
 
 
 //###############################################################################//
-//                                            OPEAÇÕES MATRICIAIS                                                    //
+//                             OPEAÇÕES MATRICIAIS                               //
 //###############################################################################//
 void cop_mat(Matriz* m1, Matriz* m2){
 	m2->linhas = m1->linhas;
@@ -891,7 +876,6 @@ void ident(Matriz* m,  int t){
 //Retorna uma matriz identidade de dimensão txt
 	m->linhas = t;
 	m->colunas = t;
-	//memset(m->matriz, 0, sizeof(m->matriz));
 	int i;
 	for(i = 0; i < t; i++) { m->matriz[(t+1)*i] = 1.0;}
 }
@@ -961,8 +945,6 @@ void pm (Matriz* m1, Matriz* m2, Matriz* res, char* op){
 			}
 	}
 	else {
-		//Erro: Matrizes de tamanhos diferentes
-		//Retorna uma matriz |0
 		return;
 	}				       
 }
